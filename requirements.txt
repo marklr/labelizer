@@ -1,0 +1,5 @@
+transformers
+requests
+tqdm
+torch
+coloredlogs

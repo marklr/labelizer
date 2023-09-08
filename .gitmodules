@@ -1,0 +1,3 @@
+[submodule "photoprism_client"]
+	path = labelizer/photoprism_client
+	url = https://github.com/marklr/photoprism_client
