@@ -34,7 +34,9 @@ use_blip2 = os.getenv("USE_BLIP2", False) and not use_vqa
 model_name = os.getenv("MODEL_HUGGING_FACE_ID")
 
 # todo: mps?
-device = "cuda" if torch.cuda.is_available() else "mps"
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+stop_tokens = ["it", "is", "they", "yes", "no"]
 
 
 @functools.cache
@@ -89,9 +91,14 @@ def generate_caption_vqa(image):
         "what is the image about?",
         "",
     ]:
-        ret.append(generate_caption(image, p))
-    ret = list(set(ret))
-    return ", ".join(ret)
+        ret.append(
+            generate_caption(
+                image,
+                p + (", in addition to: " + ", ".join(list(set(ret))) if ret else ""),
+            )
+        )
+    ret = list(filter(lambda x: x and x not in stop_tokens, list(set(ret))))
+    return ",".join(ret)
 
 
 def process_image(file_path):
@@ -121,23 +128,18 @@ def cleanup_string(s):
     # just use a csv writer
     single_quote = "'"
     double_quote = '"'
-    stop_tokens = [
-        "it",
-        "is",
-        "they",
-    ]
-
     s = re.sub("\\b(" + "|".join(stop_tokens) + ")\\b", "", s)
+    s = re.sub(r",{2+}", ",", s)
     s = re.sub(r"\s+", " ", s)
     return s.replace(double_quote, single_quote).strip()
 
 
 def get_file_paths(root):
     # determine if root argument is a file, folder or url
-    if os.path.isfile(root) or root.startswith("http"):
-        yield root
-    elif os.path.isdir(root):
+    if os.path.isdir(root):
         yield from process_folder(root)
+    elif os.path.isfile(root) or root.startswith("http"):
+        yield root
     else:
         raise Exception(f"Invalid argument: {root}")
 
