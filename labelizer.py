@@ -81,21 +81,17 @@ def generate_caption_vqa(image):
     model = get_model(os.getenv("MODEL_VQA_HFID"), use_vqa=True)
     processor = get_processor(os.getenv("MODEL_VQA_HFID"))
 
+    # todo: batch prompts
     ret = []
     for p in [
+        "is a photo of someone taking a picture of themselves? if yes, say selfie",
         "what are the objects in this image?",
         "what is special about this image?",
         "what is the image about?",
+        "list all foods in this image if there are any",
         "",
     ]:
-        ret.append(
-            generate_caption(
-                model,
-                processor,
-                image,
-                p + (", in addition to: " + ", ".join(list(set(ret))) if ret else ""),
-            )
-        )
+        ret.append(generate_caption(model, processor, image, p))
     ret = list(filter(lambda x: x and x not in stop_tokens, list(set(ret))))
     log.info(f"VQA keywords: {','.join(ret)}")
 
