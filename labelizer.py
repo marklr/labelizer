@@ -226,7 +226,7 @@ def handle_photoprism_photo(photo, photo_instance, readonly=True):
         os.path.join(os.getenv("PHOTOPRISM_DOWNLOAD_PATH"), f"{hash}.{file_extension}")
     )
 
-    log.info(f"Downloading {hash} from PhotoPrism to {p}")
+    log.info(f"Fetching {hash}/{photo['UID']} -> {p}")
 
     if photo_instance.download_file(
         hash=hash, path=os.getenv("PHOTOPRISM_DOWNLOAD_PATH"), filename=hash
@@ -242,6 +242,7 @@ def handle_photoprism_photo(photo, photo_instance, readonly=True):
                 ),  # PP keyword updates seem broken?
                 keywords,
             )
+        delete_local(p)
     else:
         log.error(f"Failed to download {pformat(photo)}")
     return True
