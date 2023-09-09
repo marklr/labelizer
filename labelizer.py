@@ -206,7 +206,7 @@ def get_file_extension(filename):
 
 
 def delete_local(path):
-    if not os.getenv("PHOTOPRISM_DOWNLOAD_NO_DELETE", False):
+    if "true" != os.getenv("PHOTOPRISM_DOWNLOAD_NO_DELETE", "false").lower():
         log.info(f"Removing downloaded file {path}")
         os.unlink(path)
 
