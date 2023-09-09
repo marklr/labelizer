@@ -297,23 +297,45 @@ def maybe_trap_sigint():
         pass
 
 
-def validate_env():
+# preloads models and does a basic sanity check
+def validate_env(args=None):
     if not (os.getenv("MODEL_VQA_HFID", False) and os.getenv("MODEL_BLIP_HFID", False)):
         raise Exception(
             "Please set one or both of MODEL_VQA_HFID and MODEL_BLIP_HFID environment variables"
         )
 
-    if not (os.getenv("ENABLE_VQA", False) and os.getenv("ENABLE_CAPTION", False)):
+    if not (os.getenv("ENABLE_VQA", False) or os.getenv("ENABLE_CAPTION", False)):
         raise Exception(
             "Please set one or both of ENABLE_VQA and ENABLE_CAPTION environment variables"
         )
+
+    if os.getenv("ENABLE_VQA"):
+        if not os.getenv("MODEL_VQA_HFID"):
+            raise Exception(
+                "Please set MODEL_VQA_HFID environment variable when ENABLE_VQA is set"
+            )
+        get_model("MODEL_VQA_HFID", True)
+
+    if os.getenv("ENABLE_CAPTION"):
+        if not os.getenv("MODEL_BLIP_HFID"):
+            raise Exception(
+                "Please set MODEL_BLIP_HFID environment variable when ENABLE_CAPTION is set"
+            )
+        get_model("MODEL_BLIP_HFID", False)
+
+    if args and args.mode == "photoprism":
+        for field in ["PASSWORD", "USERNAME", "BASE_DOMAIN"]:
+            if not os.getenv(f"PHOTOPRISM_{field}"):
+                raise Exception(
+                    f"Please set PHOTOPRISM_{field} environment variable when operating in photoprism mode"
+                )
 
 
 def main():
     maybe_trap_sigint()
 
     args = get_args()
-    validate_env()
+    validate_env(args)
 
     if args.mode == "local":
         handle_local(args)
