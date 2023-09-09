@@ -1,5 +1,8 @@
+pillow
 transformers
 requests
 tqdm
 torch
 coloredlogs
+huggingface_hub
+-e "git+https://github.com/marklr/photoprism_client.git@main#egg=photoprism_client"

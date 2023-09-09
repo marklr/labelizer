@@ -20,44 +20,37 @@ from transformers import (
     Blip2ForConditionalGeneration,
     BlipForQuestionAnswering,
 )
-from .photoprism_client.photoprism.Session import Session
-from .photoprism_client.photoprism.Photo import Photo
+from photoprism.Session import Session
+from photoprism.Photo import Photo
 
 logging.basicConfig()
 coloredlogs.install()
 log = logging.getLogger()
 
-use_vqa = os.getenv("USE_VQA", False)
-use_blip2 = os.getenv("USE_BLIP2", False) and not use_vqa
-
-# e.g. salesforce/blip
-model_name = os.getenv("MODEL_HUGGING_FACE_ID")
-
 # todo: mps?
 device = "cuda" if torch.cuda.is_available() else "cpu"
-
 stop_tokens = ["it", "is", "they", "yes", "no"]
 
 
 @functools.cache
-def get_processor():
-    processor = None
+def is_blip2(model_name):
+    return "blip2" in model_name or os.getenv("FORCE_BLIP2", False)
 
-    def _get():
-        # todo: document processor choice
-        processor_ = Blip2Processor if use_blip2 else BlipProcessor
-        processor = processor_.from_pretrained(model_name)
-        return processor
 
-    return processor or _get()
+@functools.cache
+def get_processor(model_name):
+    processor_ = Blip2Processor if is_blip2(model_name) else BlipProcessor
+    processor = processor_.from_pretrained(model_name)
+    return processor
 
 
 ## ---------------------- ##
 
 
 @functools.cache
-def get_model():
-    log.info(f"Loading model {model_name}, blip2 = {use_blip2}...")
+def get_model(model_name, use_vqa):
+    use_blip2 = is_blip2(model_name)
+    log.debug(f"Loading model {model_name}, blip2 = {use_blip2}...")
 
     cls = (
         Blip2ForConditionalGeneration
@@ -67,23 +60,27 @@ def get_model():
     return cls.from_pretrained(model_name).to(device)
 
 
-def generate_caption(image, prompt):
-    model = get_model()
-    proc = get_processor()
-    inputs = proc(image, prompt, return_tensors="pt").to(device)
+def generate_caption(model, processor, image, prompt):
+    inputs = processor(image, prompt, return_tensors="pt").to(device)
 
     generated_ids = model.generate(**inputs, max_new_tokens=64)
-    generated_text = proc.batch_decode(generated_ids, skip_special_tokens=True)[
-        0
-    ].strip()
-    return generated_text
+    generated_text = processor.batch_decode(generated_ids, skip_special_tokens=True)
+    return generated_text[0].strip()
 
 
 def generate_caption_plain(image):
-    return generate_caption(image, "a photograph of")
+    model = get_model(os.getenv("MODEL_BLIP_HFID"), use_vqa=False)
+    processor = get_processor(os.getenv("MODEL_BLIP_HFID"))
+
+    ret = generate_caption(model, processor, image, "a photograph of")
+    log.info(f"VC description: {ret}")
+    return ret
 
 
 def generate_caption_vqa(image):
+    model = get_model(os.getenv("MODEL_VQA_HFID"), use_vqa=True)
+    processor = get_processor(os.getenv("MODEL_VQA_HFID"))
+
     ret = []
     for p in [
         "what are the objects in this image?",
@@ -93,15 +90,19 @@ def generate_caption_vqa(image):
     ]:
         ret.append(
             generate_caption(
+                model,
+                processor,
                 image,
                 p + (", in addition to: " + ", ".join(list(set(ret))) if ret else ""),
             )
         )
     ret = list(filter(lambda x: x and x not in stop_tokens, list(set(ret))))
-    return ",".join(ret)
+    log.info(f"VQA keywords: {','.join(ret)}")
+
+    return ", ".join(ret)
 
 
-def process_image(file_path):
+def process_image(file_path, use_vqa=False):
     file = (
         requests.get(file_path, stream=True).raw
         if not os.path.exists(file_path) and file_path.startswith("http")
@@ -109,9 +110,10 @@ def process_image(file_path):
     )
     image = Image.open(file).convert("RGB")
 
-    if os.getenv("USE_VQA"):
-        return generate_caption_vqa(image)
-    return generate_caption_plain(image)
+    output = []
+    keywords = generate_caption_vqa(image) if use_vqa else ""
+    caption = generate_caption_plain(image)
+    return keywords, caption
 
 
 def process_folder(folder_path):
@@ -130,6 +132,7 @@ def cleanup_string(s):
     double_quote = '"'
     s = re.sub("\\b(" + "|".join(stop_tokens) + ")\\b", "", s)
     s = re.sub(r",{2+}", ",", s)
+    s = re.sub(r"^,|,$", "", s)
     s = re.sub(r"\s+", " ", s)
     return s.replace(double_quote, single_quote).strip()
 
@@ -148,6 +151,7 @@ def get_args():
     parser = argparse.ArgumentParser(
         description="Caption images in a folder or photoprism url"
     )
+
     parser.add_argument(
         "mode",
         metavar="mode",
@@ -155,12 +159,14 @@ def get_args():
         help="Operating mode - photoprism or url/folder/path; make sure to set proper environment variables for PhotoPrism",
         choices=["photoprism", "local"],
         default="local",
+        nargs="?",
     )
+
     parser.add_argument(
-        "-i",
-        "--input-path",
-        metavar="path",
+        "input_path",
+        metavar="input_path",
         type=str,
+        nargs="?",
         help="image url or folder path/file",
     )
     parser.add_argument(
@@ -189,7 +195,9 @@ def handle_local(args, path_=None):
     for path in get_file_paths(p):
         p = os.path.abspath(path)
         try:
-            ret = cleanup_string(process_image(p))
+            ret = cleanup_string(
+                ",".join(process_image(p, use_vqa=os.getenv("ENABLE_VQA", False)))
+            )
             # todo: cleanup
             print(f'"{cleanup_string(p)}","{ret}"', file=outlog)
             return ret
@@ -209,6 +217,42 @@ def delete_local(path):
         os.unlink(path)
 
 
+def handle_photoprism_photo(photo, photo_instance, readonly=True):
+    if not photo or not photo.get("Hash") or not photo.get("Type") == "image":
+        # todo: proper logging
+        log.debug(f"Skipping photo - {pformat(photo)}")
+        return None
+
+    hash = photo["Hash"]
+    file_extension = get_file_extension(photo["FileName"])
+
+    # log.debug(pprint(photo))
+
+    p = os.path.abspath(
+        os.path.join(os.getenv("PHOTOPRISM_DOWNLOAD_PATH"), f"{hash}.{file_extension}")
+    )
+
+    log.info(f"Downloading {hash} from PhotoPrism to {p}")
+
+    if photo_instance.download_file(
+        hash=hash, path=os.getenv("PHOTOPRISM_DOWNLOAD_PATH"), filename=hash
+    ) and os.path.exists(p):
+        (keywords, caption) = process_image(p, use_vqa=os.getenv("ENABLE_VQA", False))
+
+        if not readonly:
+            photo_instance.update_photo_description_and_keywords(
+                photo["UID"],
+                caption
+                + (
+                    f" ({keywords})" if keywords else ""
+                ),  # PP keyword updates seem broken?
+                keywords,
+            )
+    else:
+        log.error(f"Failed to download {pformat(photo)}")
+    return True
+
+
 def handle_photoprism(args):
     pp_session = Session(
         os.getenv("PHOTOPRISM_USERNAME"),
@@ -223,12 +267,13 @@ def handle_photoprism(args):
     # todo: pagination
 
     photo_instance = Photo(pp_session)
-    num_photos = 500
+    num_photos = int(os.getenv("PHOTOPRISM_BATCH_SIZE", 10))
     offset = 0
 
     data = photo_instance.search(
         query="original:*", count=num_photos, offset=offset, order="newest"
     )
+
     while data:
         log.info(
             f"Fetched {len(data)} photos from PhotoPrism (offset={offset}, pagesize={num_photos})..."
@@ -236,36 +281,7 @@ def handle_photoprism(args):
 
         for photo in data:
             offset += 1
-            if not photo or not photo.get("Hash") or not photo.get("Type") == "image":
-                # todo: proper logging
-                log.debug(f"Skipping photo - {pformat(photo)}")
-                continue
-
-            hash = photo["Hash"]
-            file_extension = get_file_extension(photo["FileName"])
-
-            # log.debug(pprint(photo))
-
-            p = os.path.abspath(
-                os.path.join(
-                    os.getenv("PHOTOPRISM_DOWNLOAD_PATH"), f"{hash}.{file_extension}"
-                )
-            )
-
-            log.info(f"Downloading {hash} from PhotoPrism to {p}")
-
-            if photo_instance.download_file(
-                hash=hash, path=os.getenv("PHOTOPRISM_DOWNLOAD_PATH"), filename=hash
-            ) and os.path.exists(p):
-                caption = handle_local(args, p)
-                if caption:
-                    log.info(f"Generated description for {photo['UID']}: {caption}")
-
-                    if not args.readonly:
-                        photo_instance.update_photo_description(photo["UID"], caption)
-                delete_local(p)
-            else:
-                log.error(f"Failed to download {pformat(photo)}")
+            handle_photoprism_photo(photo, photo_instance, readonly=args.readonly)
 
         data = photo_instance.search(
             query="original:*", count=num_photos, offset=offset
@@ -285,14 +301,30 @@ def maybe_trap_sigint():
         pass
 
 
+def validate_env():
+    if not (os.getenv("MODEL_VQA_HFID", False) and os.getenv("MODEL_BLIP_HFID", False)):
+        raise Exception(
+            "Please set one or both of MODEL_VQA_HFID and MODEL_BLIP_HFID environment variables"
+        )
+
+    if not (os.getenv("ENABLE_VQA", False) and os.getenv("ENABLE_CAPTION", False)):
+        raise Exception(
+            "Please set one or both of ENABLE_VQA and ENABLE_CAPTION environment variables"
+        )
+
+
 def main():
     maybe_trap_sigint()
 
     args = get_args()
+    validate_env()
+
     if args.mode == "local":
         handle_local(args)
     elif args.mode == "photoprism":
         handle_photoprism(args)
+    else:
+        args.print_help()
 
 
 if __name__ == "__main__":
