@@ -304,7 +304,7 @@ def validate_env(args=None):
             "Please set one or both of MODEL_VQA_HFID and MODEL_BLIP_HFID environment variables"
         )
 
-    if not (os.getenv("ENABLE_VQA", False) or os.getenv("ENABLE_CAPTION", False)):
+    if not (os.getenv("ENABLE_VQA", False) and os.getenv("ENABLE_CAPTION", False)):
         raise Exception(
             "Please set one or both of ENABLE_VQA and ENABLE_CAPTION environment variables"
         )
@@ -314,14 +314,14 @@ def validate_env(args=None):
             raise Exception(
                 "Please set MODEL_VQA_HFID environment variable when ENABLE_VQA is set"
             )
-        get_model("MODEL_VQA_HFID", True)
+        get_model(os.getenv("MODEL_VQA_HFID"), True)
 
     if os.getenv("ENABLE_CAPTION"):
         if not os.getenv("MODEL_BLIP_HFID"):
             raise Exception(
                 "Please set MODEL_BLIP_HFID environment variable when ENABLE_CAPTION is set"
             )
-        get_model("MODEL_BLIP_HFID", False)
+        get_model(os.getenv("MODEL_BLIP_HFID"), False)
 
     if args and args.mode == "photoprism":
         for field in ["PASSWORD", "USERNAME", "BASE_DOMAIN"]:
