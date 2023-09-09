@@ -1,4 +1,6 @@
+import functools
 import signal
+import traceback
 from PIL import Image
 import requests
 import sys
@@ -16,6 +18,7 @@ from transformers import (
     BlipForConditionalGeneration,
     Blip2Processor,
     Blip2ForConditionalGeneration,
+    BlipForQuestionAnswering,
 )
 from .photoprism_client.photoprism.Session import Session
 from .photoprism_client.photoprism.Photo import Photo
@@ -24,14 +27,17 @@ logging.basicConfig()
 coloredlogs.install()
 log = logging.getLogger()
 
-use_blip2 = os.getenv("USE_BLIP2", False)
+use_vqa = os.getenv("USE_VQA", False)
+use_blip2 = os.getenv("USE_BLIP2", False) and not use_vqa
+
 # e.g. salesforce/blip
 model_name = os.getenv("MODEL_HUGGING_FACE_ID")
 
 # todo: mps?
-device = "cuda" if torch.cuda.is_available() else "cpu"
+device = "cuda" if torch.cuda.is_available() else "mps"
 
 
+@functools.cache
 def get_processor():
     processor = None
 
@@ -47,22 +53,48 @@ def get_processor():
 ## ---------------------- ##
 
 
+@functools.cache
 def get_model():
-    model = None
+    log.info(f"Loading model {model_name}, blip2 = {use_blip2}...")
 
-    def _get():
-        log.info(f"Loading model {model_name}, blip2 = {use_blip2}...")
-
-        cls = (
-            Blip2ForConditionalGeneration if use_blip2 else BlipForConditionalGeneration
-        )
-        model = cls.from_pretrained(model_name).to(device)
-        return model
-
-    return model or _get()
+    cls = (
+        Blip2ForConditionalGeneration
+        if use_blip2
+        else (BlipForConditionalGeneration if not use_vqa else BlipForQuestionAnswering)
+    )
+    return cls.from_pretrained(model_name).to(device)
 
 
-def process_image(model, file_path):
+def generate_caption(image, prompt):
+    model = get_model()
+    proc = get_processor()
+    inputs = proc(image, prompt, return_tensors="pt").to(device)
+
+    generated_ids = model.generate(**inputs, max_new_tokens=64)
+    generated_text = proc.batch_decode(generated_ids, skip_special_tokens=True)[
+        0
+    ].strip()
+    return generated_text
+
+
+def generate_caption_plain(image):
+    return generate_caption(image, "a photograph of")
+
+
+def generate_caption_vqa(image):
+    ret = []
+    for p in [
+        "what are the objects in this image?",
+        "what is special about this image?",
+        "what is the image about?",
+        "",
+    ]:
+        ret.append(generate_caption(image, p))
+    ret = list(set(ret))
+    return ", ".join(ret)
+
+
+def process_image(file_path):
     file = (
         requests.get(file_path, stream=True).raw
         if not os.path.exists(file_path) and file_path.startswith("http")
@@ -70,16 +102,9 @@ def process_image(model, file_path):
     )
     image = Image.open(file).convert("RGB")
 
-    # todo: configurable dtype
-    proc = get_processor()
-    text = "a photograph of"
-    inputs = proc(image, text, return_tensors="pt").to(device)
-
-    generated_ids = model.generate(**inputs, max_new_tokens=64)
-    generated_text = proc.batch_decode(generated_ids, skip_special_tokens=True)[
-        0
-    ].strip()
-    return generated_text
+    if os.getenv("USE_VQA"):
+        return generate_caption_vqa(image)
+    return generate_caption_plain(image)
 
 
 def process_folder(folder_path):
@@ -96,7 +121,15 @@ def cleanup_string(s):
     # just use a csv writer
     single_quote = "'"
     double_quote = '"'
-    return s.replace(double_quote, single_quote)
+    stop_tokens = [
+        "it",
+        "is",
+        "they",
+    ]
+
+    s = re.sub("\\b(" + "|".join(stop_tokens) + ")\\b", "", s)
+    s = re.sub(r"\s+", " ", s)
+    return s.replace(double_quote, single_quote).strip()
 
 
 def get_file_paths(root):
@@ -148,17 +181,18 @@ def get_args():
     return parser.parse_args()
 
 
-def handle_local(args, path_, model_=None):
-    model = get_model() if not model_ else model_
+def handle_local(args, path_=None):
     outlog = open(args.output, "w+") if args.output else sys.stdout
-    for path in get_file_paths(path_ or args.path):
+    p = path_ or args.input_path
+    for path in get_file_paths(p):
         p = os.path.abspath(path)
         try:
-            ret = process_image(model, p)
+            ret = cleanup_string(process_image(p))
             # todo: cleanup
-            print(f'"{cleanup_string(p)}","{cleanup_string(ret)}"', file=outlog)
+            print(f'"{cleanup_string(p)}","{ret}"', file=outlog)
             return ret
         except Exception as e:
+            print(traceback.format_exc())
             log.error(f"{p},{e}")
     return None
 
@@ -184,7 +218,6 @@ def handle_photoprism(args):
     pp_session.create()
 
     log.info(f"Connected to PhotoPrism: {pp_session.session_id}")
-    model = get_model()
     # todo: pagination
 
     photo_instance = Photo(pp_session)
@@ -222,7 +255,7 @@ def handle_photoprism(args):
             if photo_instance.download_file(
                 hash=hash, path=os.getenv("PHOTOPRISM_DOWNLOAD_PATH"), filename=hash
             ) and os.path.exists(p):
-                caption = handle_local(args, p, model_=model)
+                caption = handle_local(args, p)
                 if caption:
                     log.info(f"Generated description for {photo['UID']}: {caption}")
 
