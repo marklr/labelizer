@@ -196,11 +196,9 @@ def handle_local(args, path_=None):
             )
             # todo: cleanup
             print(f'"{cleanup_string(p)}","{ret}"', file=outlog)
-            return ret
         except Exception as e:
             print(traceback.format_exc())
             log.error(f"{p},{e}")
-    return None
 
 
 def get_file_extension(filename):
