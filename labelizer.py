@@ -1,6 +1,8 @@
 import functools
+from itertools import chain
 import signal
 import traceback
+from typing import List
 from PIL import Image
 import requests
 import sys
@@ -29,7 +31,7 @@ log = logging.getLogger()
 
 # todo: mps?
 device = "cuda" if torch.cuda.is_available() else "cpu"
-stop_tokens = ["it", "is", "they", "yes", "no"]
+stop_tokens = ["it", "is", "they", "yes", "no", "none", "i'm not sure", "i don't know", "no animals", "not food", "not a selfie", "no words", "joke"]
 
 
 @functools.cache
@@ -59,14 +61,67 @@ def get_model(model_name, use_vqa):
     )
     return cls.from_pretrained(model_name).to(device)
 
+def is_iterable(o):
+    if isinstance(o, str):
+        return False
+    
+    try:
+        iter(o)
+        return True
+    except Exception:
+        return False
 
-def generate_caption(model, processor, image, prompt):
-    inputs = processor(image, prompt, return_tensors="pt").to(device)
+def cleanup_list(l):
+    ret = []
+    
+    if not is_iterable(l):
+        return cleanup_list([l, ])
+    
+    for i, el in enumerate(l):
+        if is_iterable(el):
+            ret[i] = cleanup_list(el)
+        else:
+            el = el.lower()
+            if el in stop_tokens:
+                continue
+            ret.append(el)
 
-    generated_ids = model.generate(**inputs, max_new_tokens=64)
-    generated_text = processor.batch_decode(generated_ids, skip_special_tokens=True)
-    return generated_text[0].strip()
+    return list(set(filter(lambda el: el, ret)))
 
+def generate_caption_multi(model, processor, image, prompt: List[str]|str|List[List[str]]):
+    new_prompt = []
+    relabel = []
+    if not is_iterable(prompt):
+        new_prompt.append(prompt)
+    else:
+        for x in prompt:
+            if is_iterable(x):
+                new_prompt.append(x[0])
+                relabel.append(x[1])
+            else:
+                new_prompt.append(x)
+                relabel.append(None)
+        
+    ret = []
+    for i, p in enumerate(new_prompt):
+        caption = generate_caption(model, processor, image, p)
+        if caption[0] == "yes" and relabel[i]:
+            ret.append(relabel[i])
+        else:
+            ret.append(caption[0])
+    return ret
+
+def generate_caption(model, processor, image, prompt: List[str]|str|List[List[str]]):
+    if is_iterable(prompt):
+        generated_text = generate_caption_multi(model, processor, image, prompt)
+    else:
+        inputs = processor(image, prompt, return_tensors="pt").to(device)
+
+        generated_ids = model.generate(**inputs, max_new_tokens=64)
+        generated_text = processor.batch_decode(generated_ids, skip_special_tokens=True)
+    
+    log.info(f"Model prompt: {prompt} -> {generated_text}")
+    return generated_text if is_iterable(generated_text) else [generated_text, ]
 
 def generate_caption_plain(image):
     model = get_model(os.getenv("MODEL_BLIP_HFID"), use_vqa=False)
@@ -74,7 +129,7 @@ def generate_caption_plain(image):
 
     ret = generate_caption(model, processor, image, "a photograph of")
     log.info(f"VC description: {ret}")
-    return ret
+    return ret[0]
 
 
 def generate_caption_vqa(image):
@@ -83,19 +138,24 @@ def generate_caption_vqa(image):
 
     # todo: batch prompts
     ret = []
-    for p in [
-        "is a photo of someone taking a picture of themselves? if yes, say selfie",
-        "what are the objects in this image?",
-        "what is special about this image?",
-        "what is the image about?",
-        "list all foods in this image if there are any",
-        "",
-    ]:
-        ret.append(generate_caption(model, processor, image, p))
-    ret = list(filter(lambda x: x and x not in stop_tokens, list(set(ret))))
-    log.info(f"VQA keywords: {','.join(ret)}")
+    p = [
+        ("is this definitely a selfie?", "selfie"),
+        ("was this selfie taken by the person in the selfie?", "selfie"),
+        ("is this definitely a screenshot with visible controls?", "screenshot"),
+        ("is this very likely to be a meme or reaction image?", "meme"),
+        "what is the main subject of this photograph?",
+        "what is in the background of this photograph?",
+        "what is this image about?",
+        "what is in this photograph?",
+        "what are the objects in this photograph?",
+        "what are the things in this photograph?",
+        "name any animals in this photograph",
+    ]
 
-    return ", ".join(ret)
+    ret = cleanup_list(generate_caption(model, processor, image, p))
+    log.info(f"VQA keywords: {ret}")
+
+    return ','.join(ret)
 
 
 def process_image(file_path, use_vqa=False):
@@ -106,7 +166,6 @@ def process_image(file_path, use_vqa=False):
     )
     image = Image.open(file).convert("RGB")
 
-    output = []
     keywords = generate_caption_vqa(image) if use_vqa else ""
     caption = generate_caption_plain(image)
     return keywords, caption
