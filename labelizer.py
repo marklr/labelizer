@@ -280,14 +280,18 @@ def process_image(file_path):
     caption = generate_caption_plain(image) if use_captions() else ""
     return keywords, caption
 
+
 def is_image_filename(filename):
-    pat = r".*\.(" + '|'.join(supported_image_extensions) + ")"
+    pat = r".*\.(" + "|".join(supported_image_extensions) + ")"
     return re.match(pat, filename, re.I)
 
+
 def process_folder(folder_path):
-    return filter(lambda file_path: os.path.isfile(file_path) and is_image_filename(os.path.basename(file_path)), 
-                                                                                    glob.iglob(folder_path + "**/*", recursive=True)
-        )
+    return filter(
+        lambda file_path: os.path.isfile(file_path)
+        and is_image_filename(os.path.basename(file_path)),
+        glob.iglob(folder_path + "**/*", recursive=True),
+    )
 
 
 def cleanup_string(s):
@@ -305,9 +309,10 @@ def is_url_of_image_file(url: str):
     # make it's a URI
     if not url.strip().startswith("http"):
         return False
-    
+
     parsed_url = urlparse.urlparse(url)
     return is_image_filename(parsed_url.path)
+
 
 def get_file_paths(root_):
     # resolve any symbolic links
@@ -523,7 +528,11 @@ def validate_env(args=None):
         )
 
     if use_vqa():
-        if not (os.getenv("MODEL_VQA_HFID", None) and os.getenv('VQA_PROMPTS_FILE', None) and os.path.exists(os.getenv('VQA_PROMPTS_FILE'))):
+        if not (
+            os.getenv("MODEL_VQA_HFID", None)
+            and os.getenv("VQA_PROMPTS_FILE", None)
+            and os.path.exists(os.getenv("VQA_PROMPTS_FILE"))
+        ):
             raise Exception(
                 "Please set MODEL_VQA_HFID environment variable when ENABLE_VQA is set"
             )

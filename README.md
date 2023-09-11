@@ -30,6 +30,8 @@ See [example config](.env.example) for explanation on each envar.
 ```
 source ./.venv/bin/activate && source .env
 python labelizer.py local <path to file / folder / url> -o output.csv
+# E.G.,
+# python labelizer.py local $(find /some/photos/archive -name "*jpg" -print  | head -20 | shuf | xargs -t)
 ```
 
 
