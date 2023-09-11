@@ -1,6 +1,8 @@
+from datetime import datetime
 import functools
-from itertools import chain
+import json
 import signal
+import sqlite3
 import traceback
 from typing import List
 from PIL import Image
@@ -31,7 +33,85 @@ log = logging.getLogger()
 
 # todo: mps?
 device = "cuda" if torch.cuda.is_available() else "cpu"
-stop_tokens = ["it", "is", "they", "yes", "no", "none", "i'm not sure", "i don't know", "no animals", "not food", "not a selfie", "no words", "joke"]
+stop_tokens = [
+    "it",
+    "is",
+    "they",
+    "yes",
+    "no",
+    "none",
+    "i'm not sure",
+    "i don't know",
+    "no animals",
+    "not food",
+    "not a selfie",
+    "no words",
+    "joke",
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "not dog",
+    "not animals",
+]
+
+
+# sqlite wrapper to retrieve a value by the provided key
+def get_last_update(photo_id):
+    db_path = os.getenv("STATE_DB_PATH", None)
+    if not db_path:
+        return None
+    try:
+        with sqlite3.connect(db_path) as db:
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT last_update FROM last_update WHERE photo_id=?", (photo_id,)
+            )
+            ret = cursor.fetchone()
+            cursor.close()
+
+            return ret
+    except Exception:
+        return None
+
+
+def store_last_update(photo_id, last_update, photo_data=""):
+    db_path = os.getenv("STATE_DB_PATH", None)
+    if not db_path:
+        return None
+    try:
+        with sqlite3.connect(db_path) as db:
+            cursor = db.cursor()
+            cursor.execute(
+                "INSERT INTO last_update VALUES (?, ?, ?)",
+                (photo_id, last_update, photo_data),
+            )
+            db.commit()
+    except Exception:
+        log.warn(traceback.format_exc())
+
+
+def create_state_db():
+    db_path = os.getenv("STATE_DB_PATH", None)
+    if not db_path:
+        return None
+    try:
+        with sqlite3.connect(db_path) as db:
+            cursor = db.cursor()
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS last_update (photo_id text, last_update text, full_photo_data text)"
+            )
+
+            return True
+    except Exception:
+        log.warn(traceback.format_exc())
+        return False
 
 
 @functools.cache
@@ -88,7 +168,10 @@ def cleanup_list(l):
 
     return list(set(filter(lambda el: el, ret)))
 
-def generate_caption_multi(model, processor, image, prompt: List[str]|str|List[List[str]]):
+
+def generate_caption_multi(
+    model, processor, image, prompt: List[str] | str | List[List[str]]
+):
     new_prompt = []
     relabel = []
     if not is_iterable(prompt):
@@ -101,7 +184,7 @@ def generate_caption_multi(model, processor, image, prompt: List[str]|str|List[L
             else:
                 new_prompt.append(x)
                 relabel.append(None)
-        
+
     ret = []
     for i, p in enumerate(new_prompt):
         caption = generate_caption(model, processor, image, p)
@@ -111,7 +194,10 @@ def generate_caption_multi(model, processor, image, prompt: List[str]|str|List[L
             ret.append(caption[0])
     return ret
 
-def generate_caption(model, processor, image, prompt: List[str]|str|List[List[str]]):
+
+def generate_caption(
+    model, processor, image, prompt: List[str] | str | List[List[str]]
+):
     if is_iterable(prompt):
         generated_text = generate_caption_multi(model, processor, image, prompt)
     else:
@@ -119,9 +205,16 @@ def generate_caption(model, processor, image, prompt: List[str]|str|List[List[st
 
         generated_ids = model.generate(**inputs, max_new_tokens=64)
         generated_text = processor.batch_decode(generated_ids, skip_special_tokens=True)
-    
+
     log.info(f"Model prompt: {prompt} -> {generated_text}")
-    return generated_text if is_iterable(generated_text) else [generated_text, ]
+    return (
+        generated_text
+        if is_iterable(generated_text)
+        else [
+            generated_text,
+        ]
+    )
+
 
 def generate_caption_plain(image):
     model = get_model(os.getenv("MODEL_BLIP_HFID"), use_vqa=False)
@@ -155,7 +248,7 @@ def generate_caption_vqa(image):
     ret = cleanup_list(generate_caption(model, processor, image, p))
     log.info(f"VQA keywords: {ret}")
 
-    return ','.join(ret)
+    return ",".join(ret)
 
 
 def process_image(file_path, use_vqa=False):
@@ -327,6 +420,7 @@ def handle_photoprism(args):
     data = photo_instance.search(
         query="original:*", count=num_photos, offset=offset, order="newest"
     )
+    have_db = not args.readonly and create_state_db()
 
     while data:
         log.info(
@@ -335,7 +429,22 @@ def handle_photoprism(args):
 
         for photo in data:
             offset += 1
+
+            if have_db:
+                last_update = get_last_update(photo["UID"])
+                if last_update:
+                    log.info(
+                        f"Skipping {photo['UID']}, already processed on {last_update}"
+                    )
+                    continue
+
             handle_photoprism_photo(photo, photo_instance, readonly=args.readonly)
+
+            # store current time as last update
+            if have_db:
+                store_last_update(
+                    photo["UID"], datetime.now().isoformat(), json.dumps(photo)
+                )
 
         data = photo_instance.search(
             query="original:*", count=num_photos, offset=offset
