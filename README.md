@@ -19,7 +19,7 @@ Ensure you have a huggingface account and token! It's also recommended to use `d
 ### Configuration
 ```
 python3 -m virtualenv .venv && source .venv/bin/activate && pip install -r requirements.txt
-cp .env.example .env && vim .env
+cp .env.example .env && vim .env && source .env
 ```
 See [example config](.env.example) for explanation on each envar.
 
@@ -28,7 +28,7 @@ See [example config](.env.example) for explanation on each envar.
 
 #### local
 ```
-source ./.venv/bin/activate
+source ./.venv/bin/activate && source .env
 python labelizer.py local <path to file / folder / url> -o output.csv
 ```
 
@@ -37,7 +37,7 @@ python labelizer.py local <path to file / folder / url> -o output.csv
 Make sure you've entered your PhotoPrism credentials in .env;
 
 ```
-source ./.venv/bin/activate
+source ./.venv/bin/activate && source .env
 python labelizer.py photoprism # pass -r to skip updating PP photo details
 ```
 
