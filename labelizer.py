@@ -254,9 +254,7 @@ def generate_caption_vqa(image):
         "what are the objects in this photograph?",
         "what are the things in this photograph?",
         "name any animals in this photograph",
-        "where in the world was this photograph taken?",
         'what is the "mood" of this photograph?',
-        "which country was this photograph taken in?",
     ]
 
     ret = cleanup_list(generate_caption(model, processor, image, p))
