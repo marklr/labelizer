@@ -1,3 +1,4 @@
+black
 pillow
 transformers
 requests
