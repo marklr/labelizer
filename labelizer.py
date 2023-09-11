@@ -25,12 +25,19 @@ from transformers import (
     Blip2ForConditionalGeneration,
     BlipForQuestionAnswering,
 )
-from photoprism.Session import Session
-from photoprism.Photo import Photo
 
 logging.basicConfig()
 coloredlogs.install()
 log = logging.getLogger()
+
+
+def use_captions():
+    return os.getenv("ENABLE_CAPTION", "false") == "true"
+
+
+def use_vqa():
+    return os.getenv("ENABLE_VQA", "false") == "true"
+
 
 # todo: mps?
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -135,14 +142,16 @@ def get_processor(model_name):
 
 
 @functools.cache
-def get_model(model_name, use_vqa):
+def get_model(model_name):
     use_blip2 = is_blip2(model_name)
     log.debug(f"Loading model {model_name}, blip2 = {use_blip2}...")
 
     cls = (
         Blip2ForConditionalGeneration
         if use_blip2
-        else (BlipForConditionalGeneration if not use_vqa else BlipForQuestionAnswering)
+        else (
+            BlipForConditionalGeneration if not use_vqa() else BlipForQuestionAnswering
+        )
     )
     return cls.from_pretrained(model_name).to(device)
 
@@ -228,7 +237,10 @@ def generate_caption(
 
 
 def generate_caption_plain(image):
-    model = get_model(os.getenv("MODEL_BLIP_HFID"), use_vqa=False)
+    if not use_captions():
+        return ""
+
+    model = get_model(os.getenv("MODEL_BLIP_HFID"))
     processor = get_processor(os.getenv("MODEL_BLIP_HFID"))
 
     ret = generate_caption(model, processor, image, "a photograph of")
@@ -237,7 +249,10 @@ def generate_caption_plain(image):
 
 
 def generate_caption_vqa(image):
-    model = get_model(os.getenv("MODEL_VQA_HFID"), use_vqa=True)
+    if not use_vqa():
+        return ""
+
+    model = get_model(os.getenv("MODEL_VQA_HFID"))
     processor = get_processor(os.getenv("MODEL_VQA_HFID"))
 
     # todo: batch prompts
@@ -263,7 +278,7 @@ def generate_caption_vqa(image):
     return ",".join(ret)
 
 
-def process_image(file_path, use_vqa=False):
+def process_image(file_path):
     file = (
         requests.get(file_path, stream=True).raw
         if not os.path.exists(file_path) and file_path.startswith("http")
@@ -271,8 +286,8 @@ def process_image(file_path, use_vqa=False):
     )
     image = Image.open(file).convert("RGB")
 
-    keywords = generate_caption_vqa(image) if use_vqa else ""
-    caption = generate_caption_plain(image)
+    keywords = generate_caption_vqa(image) if use_vqa() else ""
+    caption = generate_caption_plain(image) if use_captions() else ""
     return keywords, caption
 
 
@@ -364,9 +379,7 @@ def handle_local(args, path_=None):
     for path in get_file_paths(p):
         p = os.path.abspath(path)
         try:
-            ret = cleanup_string(
-                ",".join(process_image(p, use_vqa=os.getenv("ENABLE_VQA", False)))
-            )
+            ret = cleanup_string(",".join(process_image(p)))
             # todo: cleanup
             print(f'"{cleanup_string(p)}","{ret}"', file=outlog)
         except Exception as e:
@@ -422,6 +435,10 @@ def handle_photoprism_photo(photo, photo_instance, readonly=True):
 
 
 def handle_photoprism(args):
+    # imports here to relieve need for requirements.txt / local mode etc
+    from photoprism.Session import Session
+    from photoprism.Photo import Photo
+
     pp_session = Session(
         os.getenv("PHOTOPRISM_USERNAME"),
         os.getenv("PHOTOPRISM_PASSWORD"),
@@ -501,19 +518,19 @@ def validate_env(args=None):
             "Please set one or both of ENABLE_VQA and ENABLE_CAPTION environment variables"
         )
 
-    if os.getenv("ENABLE_VQA"):
+    if use_vqa():
         if not os.getenv("MODEL_VQA_HFID"):
             raise Exception(
                 "Please set MODEL_VQA_HFID environment variable when ENABLE_VQA is set"
             )
-        get_model(os.getenv("MODEL_VQA_HFID"), True)
+        get_model(os.getenv("MODEL_VQA_HFID"))
 
-    if os.getenv("ENABLE_CAPTION"):
+    if use_captions():
         if not os.getenv("MODEL_BLIP_HFID"):
             raise Exception(
                 "Please set MODEL_BLIP_HFID environment variable when ENABLE_CAPTION is set"
             )
-        get_model(os.getenv("MODEL_BLIP_HFID"), False)
+        get_model(os.getenv("MODEL_BLIP_HFID"))
 
     if args and args.mode == "photoprism":
         for field in ["PASSWORD", "USERNAME", "BASE_DOMAIN"]:
