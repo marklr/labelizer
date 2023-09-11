@@ -1,6 +1,7 @@
 from datetime import datetime
 import functools
 import json
+from random import shuffle
 import signal
 import sqlite3
 import traceback
@@ -40,6 +41,8 @@ stop_tokens = [
     "yes",
     "no",
     "none",
+    "don't know",
+    "unknown",
     "i'm not sure",
     "i don't know",
     "no animals",
@@ -59,6 +62,8 @@ stop_tokens = [
     "9",
     "not dog",
     "not animals",
+    "no one",
+    "in ",
 ]
 
 
@@ -141,22 +146,28 @@ def get_model(model_name, use_vqa):
     )
     return cls.from_pretrained(model_name).to(device)
 
+
 def is_iterable(o):
     if isinstance(o, str):
         return False
-    
+
     try:
         iter(o)
         return True
     except Exception:
         return False
 
+
 def cleanup_list(l):
     ret = []
-    
+
     if not is_iterable(l):
-        return cleanup_list([l, ])
-    
+        return cleanup_list(
+            [
+                l,
+            ]
+        )
+
     for i, el in enumerate(l):
         if is_iterable(el):
             ret[i] = cleanup_list(el)
@@ -243,6 +254,9 @@ def generate_caption_vqa(image):
         "what are the objects in this photograph?",
         "what are the things in this photograph?",
         "name any animals in this photograph",
+        "where in the world was this photograph taken?",
+        'what is the "mood" of this photograph?',
+        "which country was this photograph taken in?",
     ]
 
     ret = cleanup_list(generate_caption(model, processor, image, p))
@@ -332,6 +346,15 @@ def get_args():
         help="readonly mode for photoprism - no field updates will be made",
     )
 
+    parser.add_argument(
+        "-q",
+        "--query",
+        metavar="query",
+        default="original:*",
+        type=str,
+        help="photoprism query (default: original:*)",
+    )
+
     # todo:
     # photoprism filtering opts
     return parser.parse_args()
@@ -417,15 +440,21 @@ def handle_photoprism(args):
     num_photos = int(os.getenv("PHOTOPRISM_BATCH_SIZE", 10))
     offset = 0
 
-    data = photo_instance.search(
-        query="original:*", count=num_photos, offset=offset, order="newest"
-    )
+    def do_search():
+        return photo_instance.search(
+            query=args.query, count=num_photos, offset=offset, order="newest"
+        )
+
+    data = do_search()
     have_db = not args.readonly and create_state_db()
 
     while data:
         log.info(
             f"Fetched {len(data)} photos from PhotoPrism (offset={offset}, pagesize={num_photos})..."
         )
+
+        if os.getenv("PHOTOPRISM_SHUFFLE", False):
+            shuffle(data)
 
         for photo in data:
             offset += 1
@@ -446,9 +475,7 @@ def handle_photoprism(args):
                     photo["UID"], datetime.now().isoformat(), json.dumps(photo)
                 )
 
-        data = photo_instance.search(
-            query="original:*", count=num_photos, offset=offset
-        )
+        data = do_search()
 
 
 # sigint trap
