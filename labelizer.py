@@ -17,7 +17,7 @@ import logging
 import coloredlogs
 import argparse
 from pprint import pformat, pprint
-from tqdm import tqdm
+from urllib import parse as urlparse
 from transformers import (
     BlipProcessor,
     BlipForConditionalGeneration,
@@ -25,6 +25,7 @@ from transformers import (
     Blip2ForConditionalGeneration,
     BlipForQuestionAnswering,
 )
+
 
 logging.basicConfig()
 coloredlogs.install()
@@ -40,6 +41,7 @@ def use_vqa():
 
 
 # todo: mps?
+supported_image_extensions = ["jpg", "jpeg", "png", "bmp", "gif"]
 device = "cuda" if torch.cuda.is_available() else "cpu"
 stop_tokens = [
     "it",
@@ -256,32 +258,20 @@ def generate_caption_vqa(image):
     processor = get_processor(os.getenv("MODEL_VQA_HFID"))
 
     # todo: batch prompts
-    ret = []
-    p = [
-        ("is this definitely a selfie?", "selfie"),
-        ("was this selfie taken by the person in the selfie?", "selfie"),
-        ("is this definitely a screenshot with visible controls?", "screenshot"),
-        ("is this very likely to be a meme or reaction image?", "meme"),
-        "what is the main subject of this photograph?",
-        "what is in the background of this photograph?",
-        "what is this image about?",
-        "what is in this photograph?",
-        "what are the objects in this photograph?",
-        "what are the things in this photograph?",
-        "name any animals in this photograph",
-        'what is the "mood" of this photograph?',
-    ]
+    with open(os.getenv("VQA_PROMPTS_FILE", "vqa_questions.json")) as f:
+        ret = []
+        p = json.load(f)
 
-    ret = cleanup_list(generate_caption(model, processor, image, p))
-    log.info(f"VQA keywords: {ret}")
+        ret = cleanup_list(generate_caption(model, processor, image, p))
+        log.info(f"VQA keywords: {ret}")
 
-    return ",".join(ret)
+        return ",".join(ret)
 
 
 def process_image(file_path):
     file = (
         requests.get(file_path, stream=True).raw
-        if not os.path.exists(file_path) and file_path.startswith("http")
+        if not os.path.exists(file_path) and is_url_of_image_file(file_path)
         else file_path
     )
     image = Image.open(file).convert("RGB")
@@ -290,15 +280,14 @@ def process_image(file_path):
     caption = generate_caption_plain(image) if use_captions() else ""
     return keywords, caption
 
+def is_image_filename(filename):
+    pat = r".*\.(" + '|'.join(supported_image_extensions) + ")"
+    return re.match(pat, filename, re.I)
 
 def process_folder(folder_path):
-    # glob all image files in the folder_path recursively and yield each full path
-    for file_path in glob.iglob(folder_path + "**/*", recursive=True):
-        # only match image file extensions and actual files\
-        if os.path.isfile(file_path) and re.match(
-            r".*\.(jpg|jpeg|png|bmp|gif)", file_path, re.I
-        ):
-            yield file_path
+    return filter(lambda file_path: os.path.isfile(file_path) and is_image_filename(os.path.basename(file_path)), 
+                                                                                    glob.iglob(folder_path + "**/*", recursive=True)
+        )
 
 
 def cleanup_string(s):
@@ -312,12 +301,27 @@ def cleanup_string(s):
     return s.replace(double_quote, single_quote).strip()
 
 
-def get_file_paths(root):
+def is_url_of_image_file(url: str):
+    # make it's a URI
+    if not url.strip().startswith("http"):
+        return False
+    
+    parsed_url = urlparse.urlparse(url)
+    return is_image_filename(parsed_url.path)
+
+def get_file_paths(root_):
+    # resolve any symbolic links
+    root = os.path.realpath(root_) if not is_iterable(root_) else root_
+
     # determine if root argument is a file, folder or url
-    if os.path.isdir(root):
-        yield from process_folder(root)
-    elif os.path.isfile(root) or root.startswith("http"):
-        yield root
+    if is_iterable(root):
+        for r in root:
+            yield from get_file_paths(r)
+    elif os.path.exists(root):
+        if os.path.isdir(root):
+            yield from process_folder(root)
+        elif os.path.isfile(root) or is_url_of_image_file(root):
+            yield root
     else:
         raise Exception(f"Invalid argument: {root}")
 
@@ -341,7 +345,7 @@ def get_args():
         "input_path",
         metavar="input_path",
         type=str,
-        nargs="?",
+        nargs="*",
         help="image url or folder path/file",
     )
     parser.add_argument(
@@ -417,7 +421,7 @@ def handle_photoprism_photo(photo, photo_instance, readonly=True):
     if photo_instance.download_file(
         hash=hash, path=os.getenv("PHOTOPRISM_DOWNLOAD_PATH"), filename=hash
     ) and os.path.exists(p):
-        (keywords, caption) = process_image(p, use_vqa=os.getenv("ENABLE_VQA", False))
+        (keywords, caption) = process_image(p)
 
         if not readonly:
             photo_instance.update_photo_description_and_keywords(
@@ -519,7 +523,7 @@ def validate_env(args=None):
         )
 
     if use_vqa():
-        if not os.getenv("MODEL_VQA_HFID"):
+        if not (os.getenv("MODEL_VQA_HFID", None) and os.getenv('VQA_PROMPTS_FILE', None) and os.path.exists(os.getenv('VQA_PROMPTS_FILE'))):
             raise Exception(
                 "Please set MODEL_VQA_HFID environment variable when ENABLE_VQA is set"
             )

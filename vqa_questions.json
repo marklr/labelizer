@@ -1,0 +1,14 @@
+[
+    ["is this definitely a selfie?", "selfie"],
+    ["was this selfie taken by the person in the selfie?", "selfie"],
+    ["is this definitely a screenshot with visible controls?", "screenshot"],
+    ["is this very likely to be a meme or reaction image?", "meme"],
+    "what is the main subject of this photograph?",
+    "what is in the background of this photograph?",
+    "what is this image about?",
+    "what is in this photograph?",
+    "what are the objects in this photograph?",
+    "what are the things in this photograph?",
+    "name any animals in this photograph",
+    "what is the \"mood\" of this photograph?"
+]
