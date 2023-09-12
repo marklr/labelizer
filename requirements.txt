@@ -6,4 +6,5 @@ tqdm
 torch
 coloredlogs
 huggingface_hub
+streamlit
 -e "git+https://github.com/marklr/photoprism_client.git@main#egg=photoprism_client"

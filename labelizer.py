@@ -40,6 +40,12 @@ def use_vqa():
     return os.getenv("ENABLE_VQA", "false") == "true"
 
 
+@functools.cache
+def get_vqa_prompts():
+    with open(os.getenv("VQA_PROMPTS_FILE")) as f:
+        return json.load(f)
+
+
 # todo: mps?
 supported_image_extensions = ["jpg", "jpeg", "png", "bmp", "gif"]
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -206,7 +212,8 @@ def generate_caption_multi(
             else:
                 new_prompt.append(x)
                 relabel.append(None)
-
+    if not new_prompt:
+        return ""
     ret = []
     for i, p in enumerate(new_prompt):
         caption = generate_caption(model, processor, image, p)
@@ -250,7 +257,7 @@ def generate_caption_plain(image):
     return ret[0]
 
 
-def generate_caption_vqa(image):
+def generate_caption_vqa(image, prompts):
     if not use_vqa():
         return ""
 
@@ -258,25 +265,22 @@ def generate_caption_vqa(image):
     processor = get_processor(os.getenv("MODEL_VQA_HFID"))
 
     # todo: batch prompts
-    with open(os.getenv("VQA_PROMPTS_FILE", "vqa_questions.json")) as f:
-        ret = []
-        p = json.load(f)
+    p = prompts or get_vqa_prompts()
+    ret = []
 
-        ret = cleanup_list(generate_caption(model, processor, image, p))
-        log.info(f"VQA keywords: {ret}")
+    ret = cleanup_list(generate_caption(model, processor, image, p))
+    log.info(f"VQA keywords: {ret}")
 
-        return ",".join(ret)
+    return ",".join(ret)
 
 
-def process_image(file_path):
-    file = (
-        requests.get(file_path, stream=True).raw
-        if not os.path.exists(file_path) and is_url_of_image_file(file_path)
-        else file_path
-    )
-    image = Image.open(file).convert("RGB")
+def process_image(file_path: str | bytes, prompts=None):
+    if is_url_of_image_file(file_path) and not os.path.exists(file_path):
+        image = Image.open(requests.get(file_path, stream=True).raw).convert("RGB")
+    else:
+        image = Image.open(file_path).convert("RGB")
 
-    keywords = generate_caption_vqa(image) if use_vqa() else ""
+    keywords = generate_caption_vqa(image, prompts) if use_vqa() else ""
     caption = generate_caption_plain(image) if use_captions() else ""
     return keywords, caption
 
@@ -307,7 +311,7 @@ def cleanup_string(s):
 
 def is_url_of_image_file(url: str):
     # make it's a URI
-    if not url.strip().startswith("http"):
+    if not url or not isinstance(url, str) or not url.strip().startswith("http"):
         return False
 
     parsed_url = urlparse.urlparse(url)

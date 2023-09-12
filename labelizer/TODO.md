@@ -1,2 +1,0 @@
-- add more photoprism search/filter options (specific album, query, etc)
-- add photoprism label/description update after generating captions (i.e., post metadata)
