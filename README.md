@@ -4,6 +4,18 @@ This repository contains glue code for automating captioning and keywording for 
 
 The PhotoPrism client implementation has been vendored separately.
 
+Screenshots
+===========
+
+![basics](docs/captions.png)
+
+
+![photoprism](docs/photoprism.png)
+
+
+![how cool is this?](docs/india.jpg)
+
+
 ## Supported Models and modes
 * Blip (sentence-based captioning)
 * Blip in VQA mode (better for keywording)
@@ -42,12 +54,3 @@ Make sure you've entered your PhotoPrism credentials in .env;
 source ./.venv/bin/activate && source .env
 python labelizer.py photoprism # pass -r to skip updating PP photo details
 ```
-
-Screenshots
-===========
-
-![basics](docs/captions.png)
-
-
-![photoprism](docs/photoprism.png)
-
