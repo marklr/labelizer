@@ -149,19 +149,26 @@ def get_processor(model_name):
 ## ---------------------- ##
 
 
-@functools.cache
-def get_model(model_name):
-    use_blip2 = is_blip2(model_name)
-    log.debug(f"Loading model {model_name}, blip2 = {use_blip2}...")
+# @functools.cache
+__model_instances = {}
 
-    cls = (
-        Blip2ForConditionalGeneration
-        if use_blip2
-        else (
-            BlipForConditionalGeneration if not use_vqa() else BlipForQuestionAnswering
-        )
-    )
-    return cls.from_pretrained(model_name).to(device)
+
+def get_model(model_name):
+    global __model_instances
+    if model_name in __model_instances:
+        return __model_instances[model_name]
+
+    use_blip2 = is_blip2(model_name)
+    vqa = use_vqa() and model_name == os.getenv("MODEL_VQA_HFID")
+    log.info(f"Loading model {model_name}, blip2 = {use_blip2}, vqa = {vqa}...")
+
+    if use_blip2:
+        cls = Blip2ForConditionalGeneration
+    else:
+        cls = BlipForQuestionAnswering if vqa else BlipForConditionalGeneration
+
+    __model_instances[model_name] = cls.from_pretrained(model_name).to(device)
+    return __model_instances[model_name]
 
 
 def is_iterable(o):
@@ -258,12 +265,12 @@ def generate_caption_plain(image):
 
 
 def generate_caption_vqa(image, prompts):
-    if not use_vqa():
-        return ""
-
-    model = get_model(os.getenv("MODEL_VQA_HFID"))
-    processor = get_processor(os.getenv("MODEL_VQA_HFID"))
-
+    if use_vqa():
+        model = get_model(os.getenv("MODEL_VQA_HFID"))
+        processor = get_processor(os.getenv("MODEL_VQA_HFID"))
+    else:
+        model = get_model(os.getenv("MODEL_BLIP_HFID"))
+        processor = get_processor(os.getenv("MODEL_BLIP_HFID"))
     # todo: batch prompts
     p = prompts or get_vqa_prompts()
     ret = []
