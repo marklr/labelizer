@@ -388,6 +388,14 @@ def get_args():
         help="photoprism query (default: original:*)",
     )
 
+    parser.add_argument(
+        "-m",
+        "--max_items",
+        metavar="max_items",
+        default=0,
+        type=int,
+        help="max items to process",
+    )
     # todo:
     # photoprism filtering opts
     return parser.parse_args()
@@ -509,6 +517,10 @@ def handle_photoprism(args):
                 store_last_update(
                     photo["UID"], datetime.now().isoformat(), json.dumps(photo)
                 )
+
+            if args.max_items and offset >= args.max_items:
+                log.info(f"Done - processed {offset} items")
+                return
 
         data = do_search()
 
