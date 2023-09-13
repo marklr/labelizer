@@ -396,6 +396,15 @@ def get_args():
         type=int,
         help="max items to process",
     )
+
+    parser.add_argument(
+        "-ppof",
+        "--offset",
+        metavar="offset",
+        default=0,
+        type=int,
+        help="starting offset for photoprism",
+    )
     # todo:
     # photoprism filtering opts
     return parser.parse_args()
@@ -433,6 +442,9 @@ def handle_photoprism_photo(photo, photo_instance, readonly=True):
 
     hash = photo["Hash"]
     file_extension = get_file_extension(photo["FileName"])
+    if file_extension not in supported_image_extensions:
+        log.debug(f"Skipping photo - {pformat(photo)}")
+        return None
 
     # log.debug(pprint(photo))
 
@@ -481,7 +493,7 @@ def handle_photoprism(args):
 
     photo_instance = Photo(pp_session)
     num_photos = int(os.getenv("PHOTOPRISM_BATCH_SIZE", 10))
-    offset = 0
+    offset = args.offset or 0
 
     def do_search():
         return photo_instance.search(

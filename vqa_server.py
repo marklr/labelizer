@@ -12,7 +12,10 @@ from labelizer import (
     process_image,
     is_url_of_image_file,
     cleanup_string,
+    validate_env,
 )
+
+validate_env()
 
 ACCEPTED_FILE_TYPES = ["png", "jpg", "jpeg"]
 DOCUMENT_OPTIONS = ["Please Select", "URL", "File Upload"]
