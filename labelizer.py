@@ -405,6 +405,15 @@ def get_args():
         type=int,
         help="starting offset for photoprism",
     )
+
+    parser.add_argument(
+        "-orderby",
+        "--order_by",
+        metavar="order_by",
+        default="newest",
+        type=str,
+        help="photoprism ordering mode: oldest, newest, etc",
+    )
     # todo:
     # photoprism filtering opts
     return parser.parse_args()
@@ -494,10 +503,11 @@ def handle_photoprism(args):
     photo_instance = Photo(pp_session)
     num_photos = int(os.getenv("PHOTOPRISM_BATCH_SIZE", 10))
     offset = args.offset or 0
+    order = args.order_by
 
     def do_search():
         return photo_instance.search(
-            query=args.query, count=num_photos, offset=offset, order="newest"
+            query=args.query, count=num_photos, offset=offset, order=order
         )
 
     data = do_search()
