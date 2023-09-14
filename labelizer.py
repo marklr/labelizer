@@ -407,7 +407,7 @@ def get_args():
     )
 
     parser.add_argument(
-        "-orderby",
+        "-ob",
         "--order_by",
         metavar="order_by",
         default="newest",
