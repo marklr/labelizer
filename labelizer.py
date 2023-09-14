@@ -32,10 +32,12 @@ coloredlogs.install()
 log = logging.getLogger()
 
 
+@functools.cache
 def use_captions():
     return os.getenv("ENABLE_CAPTION", "false") == "true"
 
 
+@functools.cache
 def use_vqa():
     return os.getenv("ENABLE_VQA", "false") == "true"
 
@@ -47,6 +49,9 @@ def get_vqa_prompts():
 
 
 # todo: mps?
+__model_instances = {}
+__processor_instances = {}
+
 supported_image_extensions = ["jpg", "jpeg", "png", "bmp", "gif"]
 device = "cuda" if torch.cuda.is_available() else "cpu"
 stop_tokens = [
@@ -134,25 +139,6 @@ def create_state_db():
         return False
 
 
-@functools.cache
-def is_blip2(model_name):
-    return "blip2" in model_name or os.getenv("FORCE_BLIP2", False)
-
-
-@functools.cache
-def get_processor(model_name):
-    processor_ = Blip2Processor if is_blip2(model_name) else BlipProcessor
-    processor = processor_.from_pretrained(model_name)
-    return processor
-
-
-## ---------------------- ##
-
-
-# @functools.cache
-__model_instances = {}
-
-
 def get_model(model_name):
     global __model_instances
     if model_name in __model_instances:
@@ -169,6 +155,26 @@ def get_model(model_name):
 
     __model_instances[model_name] = cls.from_pretrained(model_name).to(device)
     return __model_instances[model_name]
+
+
+@functools.cache
+def is_blip2(model_name):
+    return "blip2" in model_name or os.getenv("FORCE_BLIP2", False)
+
+
+@functools.cache
+def get_processor(model_name):
+    global __processor_instances
+    if model_name in __processor_instances:
+        return __processor_instances[model_name]
+
+    processor_ = Blip2Processor if is_blip2(model_name) else BlipProcessor
+    processor = processor_.from_pretrained(model_name)
+    __processor_instances[model_name] = processor
+    return processor
+
+
+## ---------------------- ##
 
 
 def is_iterable(o):
@@ -455,8 +461,6 @@ def handle_photoprism_photo(photo, photo_instance, readonly=True):
         log.debug(f"Skipping photo - {pformat(photo)}")
         return None
 
-    # log.debug(pprint(photo))
-
     p = os.path.abspath(
         os.path.join(os.getenv("PHOTOPRISM_DOWNLOAD_PATH"), f"{hash}.{file_extension}")
     )
@@ -470,11 +474,8 @@ def handle_photoprism_photo(photo, photo_instance, readonly=True):
 
         if not readonly:
             photo_instance.update_photo_description_and_keywords(
-                photo["UID"],
-                caption
-                + (
-                    f" ({keywords})" if keywords else ""
-                ),  # PP keyword updates seem broken?
+                photo,
+                caption + f" ({keywords})" if keywords else "",
                 keywords,
             )
         delete_local(p)
