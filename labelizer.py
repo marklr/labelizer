@@ -192,17 +192,16 @@ def cleanup_list(l):
     ret = []
 
     if not is_iterable(l):
-        return cleanup_list(
-            [
-                l,
-            ]
-        )
+        if " and " in l:
+            return cleanup_list(l.split(" and "))
 
     for i, el in enumerate(l):
+        if "," in el:
+            el = el.split(",")
         if is_iterable(el):
-            ret[i] = cleanup_list(el)
+            ret += cleanup_list(el)
         else:
-            el = el.lower()
+            el = el.lower().strip()
             if el in stop_tokens:
                 continue
             ret.append(el)
