@@ -1,0 +1,11 @@
+.direnv/**
+__pycache__/**
+test/**
+testenv/**
+.venv/**
+*.db
+.DS_Store
+*.csv
+.env
+files/**
+tmp/**
