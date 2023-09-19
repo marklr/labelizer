@@ -9,3 +9,4 @@ testenv/**
 .env
 files/**
 tmp/**
+test.py
