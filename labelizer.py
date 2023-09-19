@@ -532,17 +532,22 @@ def handle_photoprism(args):
                     )
                     continue
 
-            handle_photoprism_photo(photo, photo_instance, readonly=args.readonly)
+            if args.max_items and offset >= args.max_items:
+                log.info(f"Done - processed {offset} items")
+                return
+
+            try:
+                handle_photoprism_photo(photo, photo_instance, readonly=args.readonly)
+            except Exception:
+                log.error(photo)
+                log.error(traceback.format_exc())
+                continue
 
             # store current time as last update
             if have_db:
                 store_last_update(
                     photo["UID"], datetime.now().isoformat(), json.dumps(photo)
                 )
-
-            if args.max_items and offset >= args.max_items:
-                log.info(f"Done - processed {offset} items")
-                return
 
         data = do_search()
 
